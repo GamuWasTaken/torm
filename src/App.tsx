@@ -73,12 +73,14 @@ function App() {
             inputsValid={session.inputsValid}
             live={session.live}
             rendering={session.rendering}
+            exporting={session.exporting}
             svg={session.svg}
             onBack={session.backToLibrary}
             onDelete={removeSelected}
             onFieldChange={session.setFieldValue}
             onToggleLive={session.changeLive}
             onRender={() => void session.render()}
+            onDownloadPdf={() => void session.downloadPdf()}
           />
         }
       >

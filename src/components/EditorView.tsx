@@ -13,12 +13,14 @@ interface EditorViewProps {
   inputsValid: Accessor<boolean>;
   live: Accessor<boolean>;
   rendering: Accessor<boolean>;
+  exporting: Accessor<boolean>;
   svg: Accessor<string>;
   onBack: () => void;
   onDelete: () => void;
   onFieldChange: (name: string, value: string) => void;
   onToggleLive: (enabled: boolean) => void;
   onRender: () => void;
+  onDownloadPdf: () => void;
 }
 
 export function EditorView(props: EditorViewProps) {
@@ -62,7 +64,13 @@ export function EditorView(props: EditorViewProps) {
           />
         </Show>
 
-        <PreviewPanel svg={props.svg} rendering={props.rendering} />
+          <PreviewPanel
+            svg={props.svg}
+            rendering={props.rendering}
+            exporting={props.exporting}
+            inputsValid={props.inputsValid}
+            onDownloadPdf={props.onDownloadPdf}
+          />
       </div>
 
       <Show when={props.fields().length > 0}>

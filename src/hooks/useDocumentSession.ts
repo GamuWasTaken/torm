@@ -1,7 +1,7 @@
 import { createSignal, onCleanup } from "solid-js";
 import type { LibraryEntry } from "../library";
 import { hasInvalidInputs, initialValues, readSchema, type FormField } from "../schema";
-import { renderTypst } from "../typst";
+import { renderTypst, renderTypstPdf } from "../typst";
 import { errorMessage, isSvg, statusLabel } from "../utils";
 import type { TypstQueue } from "./useTypstQueue";
 
@@ -34,6 +34,7 @@ export function useDocumentSession(options: DocumentSessionOptions) {
   const [renderError, setRenderError] = createSignal("");
   const [schemaNotice, setSchemaNotice] = createSignal("");
   const [rendering, setRendering] = createSignal(false);
+  const [exporting, setExporting] = createSignal(false);
   const [discovering, setDiscovering] = createSignal(false);
 
   let requestId = 0;
@@ -55,6 +56,7 @@ export function useDocumentSession(options: DocumentSessionOptions) {
     requestId += 1;
     clearTimeout(debounceTimer);
     setRendering(false);
+    setExporting(false);
     setRenderError("");
   };
 
@@ -62,6 +64,7 @@ export function useDocumentSession(options: DocumentSessionOptions) {
     const id = ++requestId;
     clearTimeout(debounceTimer);
     setRendering(false);
+    setExporting(false);
     setDiscovering(false);
     return id;
   };
@@ -84,6 +87,7 @@ export function useDocumentSession(options: DocumentSessionOptions) {
     }
 
     const id = ++requestId;
+    setExporting(false);
     setRendering(true);
     try {
       const result = await options.runTypst(() => renderTypst(snapshot, values()));
@@ -99,6 +103,34 @@ export function useDocumentSession(options: DocumentSessionOptions) {
       setSvg("");
     } finally {
       if (!isStale(id)) setRendering(false);
+    }
+  };
+
+  const downloadPdf = async () => {
+    const snapshot = source();
+    if (!snapshot) return;
+    if (!inputsValid()) {
+      cancelRender();
+      return;
+    }
+
+    const id = beginOperation();
+    setExporting(true);
+    try {
+      const pdf = await options.runTypst(() => renderTypstPdf(snapshot, values()));
+      if (isStale(id)) return;
+      const url = URL.createObjectURL(new Blob([pdf], { type: "application/pdf" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${fileName().replace(/\.typ$/i, "") || "document"}.pdf`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setRenderError("");
+    } catch (cause) {
+      if (isStale(id)) return;
+      setRenderError(errorMessage(cause));
+    } finally {
+      if (!isStale(id)) setExporting(false);
     }
   };
 
@@ -221,9 +253,11 @@ export function useDocumentSession(options: DocumentSessionOptions) {
     renderError,
     schemaNotice,
     rendering,
+    exporting,
     discovering,
     status,
     render,
+    downloadPdf,
     setFieldValue,
     changeLive,
     openDocument,

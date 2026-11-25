@@ -245,6 +245,24 @@ button:disabled {
   background: #ffffff;
 }
 
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  color: #222;
+}
+
+.preview-header h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.preview-header button {
+  color: #ffffff;
+}
+
 .preview-placeholder {
   color: #888;
   text-align: center;

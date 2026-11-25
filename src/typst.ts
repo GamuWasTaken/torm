@@ -37,3 +37,14 @@ export async function renderTypst(
   });
   return sanitizeSvg(svg);
 }
+
+export async function renderTypstPdf(
+  source: string,
+  inputs: Record<string, string> = {},
+): Promise<Uint8Array<ArrayBuffer>> {
+  const pdf = await $typst.pdf({ mainContent: source, inputs });
+  if (!pdf) throw new Error("Typst did not produce a PDF. Check the document for errors.");
+  const bytes = new Uint8Array(pdf.byteLength);
+  bytes.set(pdf);
+  return bytes;
+}
