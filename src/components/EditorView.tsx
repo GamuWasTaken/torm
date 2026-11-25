@@ -10,6 +10,7 @@ interface EditorViewProps {
   schemaNotice: Accessor<string>;
   fields: Accessor<FormField[]>;
   values: Accessor<Record<string, string>>;
+  inputsValid: Accessor<boolean>;
   live: Accessor<boolean>;
   rendering: Accessor<boolean>;
   svg: Accessor<string>;
@@ -35,6 +36,11 @@ export function EditorView(props: EditorViewProps) {
       <p class="status" role="status">
         {props.status()}
       </p>
+      <Show when={!props.inputsValid()}>
+        <p class="notice" role="status">
+          Fill in all required inputs before rendering.
+        </p>
+      </Show>
       <Show when={props.schemaNotice()}>
         <p class="notice">{props.schemaNotice()}</p>
       </Show>
@@ -47,6 +53,7 @@ export function EditorView(props: EditorViewProps) {
           <DocumentForm
             fields={props.fields}
             values={props.values}
+            inputsValid={props.inputsValid}
             live={props.live}
             rendering={props.rendering}
             onFieldChange={props.onFieldChange}

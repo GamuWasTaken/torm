@@ -70,6 +70,7 @@ function App() {
             schemaNotice={session.schemaNotice}
             fields={session.fields}
             values={session.values}
+            inputsValid={session.inputsValid}
             live={session.live}
             rendering={session.rendering}
             svg={session.svg}

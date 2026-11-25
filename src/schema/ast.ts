@@ -45,7 +45,7 @@ function splitSourceRange(text: string): { label: string; range?: AstRange } {
   };
 }
 
-export function parseAstDump(dump: string): AstNode | null {
+function parseAstDump(dump: string): AstNode | null {
   let root: AstNode | null = null;
   const stack: { indent: number; node: AstNode }[] = [];
   const nodeLine = /^\s*(?:- )?(?:s|c):\s?/;

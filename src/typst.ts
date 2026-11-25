@@ -10,7 +10,7 @@ $typst.setRendererInitOptions({
   getModule: () => rendererWasm,
 });
 
-export function sanitizeSvg(svg: string): string {
+function sanitizeSvg(svg: string): string {
   const parsed = new DOMParser().parseFromString(svg, "text/html");
   for (const element of Array.from(parsed.body.querySelectorAll("*"))) {
     if (element.localName === "script" || element.localName === "foreignObject") {

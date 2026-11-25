@@ -1,11 +1,18 @@
 import { createSignal, onCleanup } from "solid-js";
 import type { LibraryEntry } from "../library";
-import { initialValues, readSchema, type FormField } from "../schema";
+import { hasInvalidInputs, initialValues, readSchema, type FormField } from "../schema";
 import { renderTypst } from "../typst";
 import { errorMessage, isSvg, statusLabel } from "../utils";
 import type { TypstQueue } from "./useTypstQueue";
 
+const RENDER_DEBOUNCE_MS = 250;
+
 type FileChangeEvent = Event & { currentTarget: HTMLInputElement };
+
+interface DiscoveredDocument {
+  entry: LibraryEntry;
+  fields: FormField[];
+}
 
 interface DocumentSessionOptions {
   runTypst: TypstQueue["run"];
@@ -29,7 +36,7 @@ export function useDocumentSession(options: DocumentSessionOptions) {
   const [rendering, setRendering] = createSignal(false);
   const [discovering, setDiscovering] = createSignal(false);
 
-  let operationToken = 0;
+  let requestId = 0;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   onCleanup(() => clearTimeout(debounceTimer));
@@ -41,14 +48,22 @@ export function useDocumentSession(options: DocumentSessionOptions) {
       fileName: fileName(),
     });
 
-  const isStale = (token: number) => token !== operationToken;
+  const isStale = (id: number) => id !== requestId;
+  const inputsValid = () => !hasInvalidInputs(fields(), values());
+
+  const cancelRender = () => {
+    requestId += 1;
+    clearTimeout(debounceTimer);
+    setRendering(false);
+    setRenderError("");
+  };
 
   const beginOperation = () => {
-    const token = ++operationToken;
+    const id = ++requestId;
     clearTimeout(debounceTimer);
     setRendering(false);
     setDiscovering(false);
-    return token;
+    return id;
   };
 
   const resetEditor = () => {
@@ -63,30 +78,38 @@ export function useDocumentSession(options: DocumentSessionOptions) {
   const render = async () => {
     const snapshot = source();
     if (!snapshot) return;
+    if (!inputsValid()) {
+      cancelRender();
+      return;
+    }
 
-    const token = ++operationToken;
+    const id = ++requestId;
     setRendering(true);
     try {
       const result = await options.runTypst(() => renderTypst(snapshot, values()));
-      if (isStale(token)) return;
+      if (isStale(id)) return;
       if (!isSvg(result)) {
         throw new Error("Typst did not produce an SVG. Check the document for errors.");
       }
       setSvg(result);
       setRenderError("");
     } catch (cause) {
-      if (isStale(token)) return;
+      if (isStale(id)) return;
       setRenderError(errorMessage(cause));
       setSvg("");
     } finally {
-      if (!isStale(token)) setRendering(false);
+      if (!isStale(id)) setRendering(false);
     }
   };
 
   const scheduleRender = () => {
-    if (!live() || !source()) return;
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => void render(), 250);
+    if (!inputsValid()) {
+      cancelRender();
+      return;
+    }
+    if (!live() || !source()) return;
+    debounceTimer = setTimeout(() => void render(), RENDER_DEBOUNCE_MS);
   };
 
   const setFieldValue = (name: string, value: string) => {
@@ -119,55 +142,61 @@ export function useDocumentSession(options: DocumentSessionOptions) {
     resetEditor();
   };
 
+  const openDiscoveredFile = (document: DiscoveredDocument) => {
+    setFileName(document.entry.name);
+    setSource(document.entry.source);
+    setFields(document.fields);
+    setValues(initialValues(document.fields));
+    options.selectDiscovered(document.entry.id);
+  };
+
+  const discoverFiles = async (files: File[], id: number) => {
+    const discovered: DiscoveredDocument[] = [];
+    let firstError = "";
+
+    for (const file of files) {
+      if (isStale(id)) return { discovered, firstError };
+      try {
+        const text = await file.text();
+        if (isStale(id)) return { discovered, firstError };
+        const fields = await options.runTypst(() => readSchema(text));
+        if (isStale(id)) return { discovered, firstError };
+        const entry = options.saveDiscovered(file.name, text, fields);
+        discovered.push({ entry, fields });
+      } catch (cause) {
+        if (isStale(id)) return { discovered, firstError };
+        if (!firstError) firstError = errorMessage(cause);
+      }
+    }
+
+    return { discovered, firstError };
+  };
+
   const handleFilesChange = async (event: FileChangeEvent) => {
     const selected = Array.from(event.currentTarget.files ?? []);
     if (selected.length === 0) return;
 
-    const unique = new Map<string, File>();
-    for (const file of selected) unique.set(file.name, file);
-    const files = [...unique.values()];
-
+    const files = [...new Map(selected.map((file) => [file.name, file] as const)).values()];
     const isBatch = files.length > 1;
-    const token = beginOperation();
+    const id = beginOperation();
     if (isBatch) options.clearSelection();
     setFileName(isBatch ? `${files.length} files` : files[0].name);
     options.clearLibraryError();
     resetEditor();
     setDiscovering(true);
 
-    const discoveredEntries: { entry: LibraryEntry; fields: FormField[] }[] = [];
-    let firstError = "";
-
     try {
-      for (const file of files) {
-        if (isStale(token)) return;
-        try {
-          const text = await file.text();
-          if (isStale(token)) return;
-          setSource(text);
-          const fields = await options.runTypst(() => readSchema(text));
-          if (isStale(token)) return;
-          const entry = options.saveDiscovered(file.name, text, fields);
-          discoveredEntries.push({ entry, fields });
-        } catch (cause) {
-          if (isStale(token)) return;
-          if (!firstError) firstError = errorMessage(cause);
-        }
-      }
+      const { discovered, firstError } = await discoverFiles(files, id);
+      if (isStale(id)) return;
 
-      if (isStale(token)) return;
       if (isBatch) {
         resetEditor();
         setFileName("");
         if (firstError) setRenderError(firstError);
       } else {
-        const active = discoveredEntries[0];
+        const active = discovered[0];
         if (active) {
-          setFileName(active.entry.name);
-          setSource(active.entry.source);
-          setFields(active.fields);
-          setValues(initialValues(active.fields));
-          options.selectDiscovered(active.entry.id);
+          openDiscoveredFile(active);
           if (!firstError && active.fields.length === 0) {
             setSchemaNotice("No inputs discovered; rendering the document as-is.");
           }
@@ -175,7 +204,7 @@ export function useDocumentSession(options: DocumentSessionOptions) {
         if (firstError) setSchemaNotice(firstError);
       }
     } finally {
-      if (!isStale(token)) {
+      if (!isStale(id)) {
         setDiscovering(false);
         if (!isBatch) void render();
       }
@@ -184,9 +213,9 @@ export function useDocumentSession(options: DocumentSessionOptions) {
 
   return {
     fileName,
-    source,
     fields,
     values,
+    inputsValid,
     live,
     svg,
     renderError,

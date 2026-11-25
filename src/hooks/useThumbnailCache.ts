@@ -12,6 +12,7 @@ export function useThumbnailCache(
   const [thumbnails, setThumbnails] = createSignal<Record<string, string>>({});
   let pending: string[] = [];
   let running = false;
+  let runningId = "";
 
   const removeThumbnail = (id: string) => {
     setThumbnails((previous) => {
@@ -29,26 +30,32 @@ export function useThumbnailCache(
     try {
       while (pending.length > 0) {
         const id = pending.shift() ?? "";
-        const entry = library().find((item) => item.id === id);
-        if (!entry || thumbnails()[id]) continue;
+        runningId = id;
         try {
-          const result = await queue.run(() =>
-            renderTypst(entry.source, initialValues(entry.fields)),
-          );
-          if (isSvg(result) && library().some((item) => item.id === id)) {
-            setThumbnails((previous) => ({ ...previous, [id]: result }));
+          const entry = library().find((item) => item.id === id);
+          if (!entry || thumbnails()[id]) continue;
+          try {
+            const result = await queue.run(() =>
+              renderTypst(entry.source, initialValues(entry.fields)),
+            );
+            if (isSvg(result) && library().some((item) => item.id === id)) {
+              setThumbnails((previous) => ({ ...previous, [id]: result }));
+            }
+          } catch {
+            removeThumbnail(id);
           }
-        } catch {
-          removeThumbnail(id);
+        } finally {
+          runningId = "";
         }
       }
     } finally {
       running = false;
+      runningId = "";
     }
   };
 
   const queueThumbnail = (entry: LibraryEntry) => {
-    if (thumbnails()[entry.id] || pending.includes(entry.id)) return;
+    if (thumbnails()[entry.id] || pending.includes(entry.id) || runningId === entry.id) return;
     pending.push(entry.id);
     void runQueue();
   };

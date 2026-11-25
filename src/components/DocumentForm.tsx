@@ -4,6 +4,7 @@ import type { FormField } from "../schema";
 interface DocumentFormProps {
   fields: Accessor<FormField[]>;
   values: Accessor<Record<string, string>>;
+  inputsValid: Accessor<boolean>;
   live: Accessor<boolean>;
   rendering: Accessor<boolean>;
   onFieldChange: (name: string, value: string) => void;
@@ -81,7 +82,11 @@ export function DocumentForm(props: DocumentFormProps) {
           />
           Live update
         </label>
-        <button type="button" onClick={props.onRender} disabled={props.rendering()}>
+        <button
+          type="button"
+          onClick={props.onRender}
+          disabled={props.rendering() || !props.inputsValid()}
+        >
           Render
         </button>
       </div>

@@ -87,7 +87,7 @@ export function readInferredFields(parsed: ParsedAst): FormField[] {
 
       const conversion = /^Fn::\(Ident: "(int|float|bool)"\)$/.exec(callee?.label ?? "");
       if (conversion && args) {
-        const type: FieldType = conversion[1] === "boolean" ? "boolean" : "number";
+        const type: FieldType = conversion[1] === "bool" ? "boolean" : "number";
         const fallback = type === "boolean" ? "false" : "0";
         const call = descendants(args).find((child) => atCallArgs(child));
 
