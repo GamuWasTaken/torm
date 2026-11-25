@@ -1,245 +1,37 @@
-import {
-  createEffect,
-  createSignal,
-  For,
-  Match,
-  onCleanup,
-  Show,
-  Switch,
-} from "solid-js";
-import { initialValues, readSchema, type FormField } from "./form";
-import { loadLibrary, makeId, saveLibrary, type LibraryEntry } from "./library";
-import { renderTypst } from "./typst";
+import { Show } from "solid-js";
+import { EditorView } from "./components/EditorView";
+import { LibraryView } from "./components/LibraryView";
+import { useDocumentSession } from "./hooks/useDocumentSession";
+import { useLibraryStore } from "./hooks/useLibraryStore";
+import { useThumbnailCache } from "./hooks/useThumbnailCache";
+import { useTypstQueue } from "./hooks/useTypstQueue";
 import "./App.css";
 
-function errorMessage(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
-}
-
-function isSvg(value: string | undefined): boolean {
-  return typeof value === "string" && value.includes("<svg");
-}
-
 function App() {
-  const [library, setLibrary] = createSignal<LibraryEntry[]>(loadLibrary());
-  const [selectedId, setSelectedId] = createSignal("");
-  const [thumbnails, setThumbnails] = createSignal<Record<string, string>>({});
-  const [source, setSource] = createSignal("");
-  const [fileName, setFileName] = createSignal("");
-  const [fields, setFields] = createSignal<FormField[]>([]);
-  const [values, setValues] = createSignal<Record<string, string>>({});
-  const [live, setLive] = createSignal(true);
-  const [svg, setSvg] = createSignal("");
-  const [error, setError] = createSignal("");
-  const [schemaError, setSchemaError] = createSignal("");
-  const [libraryError, setLibraryError] = createSignal("");
-  const [rendering, setRendering] = createSignal(false);
-  const [discovering, setDiscovering] = createSignal(false);
-
-  const selected = () => library().find((entry) => entry.id === selectedId());
-
-  let requestId = 0;
-  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
-  let typstChain: Promise<void> = Promise.resolve();
-  let thumbnailQueue: string[] = [];
-  let thumbnailRunning = false;
-
-  const withTypst = <T,>(task: () => Promise<T>): Promise<T> => {
-    const result = typstChain.catch(() => undefined).then(task);
-    typstChain = result.then(
-      () => undefined,
-      () => undefined,
-    );
-    return result;
-  };
-
-  const removeThumbnail = (id: string) => {
-    setThumbnails((previous) => {
-      const next = { ...previous };
-      delete next[id];
-      return next;
-    });
-  };
-
-  const cancelPending = () => {
-    ++requestId;
-    clearTimeout(debounceTimer);
-    setRendering(false);
-    setDiscovering(false);
-  };
-
-  const resetEditor = () => {
-    setSource("");
-    setSvg("");
-    setFields([]);
-    setValues({});
-    setError("");
-    setSchemaError("");
-  };
-
-  const statusLabel = () => {
-    if (discovering()) return `Reading ${fileName()}...`;
-    if (rendering()) return `Rendering ${fileName()}...`;
-    return `Editing ${fileName()}`;
-  };
-
-  createEffect(() => {
-    try {
-      saveLibrary(library());
-    } catch {
-      setLibraryError("Browser storage is full; recent documents may not persist.");
-    }
+  const queue = useTypstQueue();
+  const libraryStore = useLibraryStore();
+  const thumbnails = useThumbnailCache(libraryStore.library, queue);
+  const session = useDocumentSession({
+    runTypst: queue.run,
+    openEntry: libraryStore.selectEntry,
+    clearSelection: libraryStore.clearSelection,
+    saveDiscovered: (name, source, fields) => {
+      const entry = libraryStore.saveEntry(name, source, fields);
+      thumbnails.removeThumbnail(entry.id);
+      thumbnails.queueThumbnail(entry);
+      return entry;
+    },
+    selectDiscovered: libraryStore.selectEntry,
+    clearLibraryError: libraryStore.clearLibraryError,
+    getThumbnail: thumbnails.getThumbnail,
   });
 
-  onCleanup(() => clearTimeout(debounceTimer));
-
-  const runThumbnailQueue = async () => {
-    if (thumbnailRunning) return;
-    thumbnailRunning = true;
-    try {
-      while (thumbnailQueue.length > 0) {
-        const id = thumbnailQueue.shift() ?? "";
-        const entry = library().find((item) => item.id === id);
-        if (!entry || thumbnails()[id]) continue;
-        try {
-          const result = await withTypst(() =>
-            renderTypst(entry.source, initialValues(entry.fields)),
-          );
-          if (isSvg(result) && library().some((item) => item.id === id)) {
-            setThumbnails((previous) => ({ ...previous, [id]: result }));
-          }
-        } catch {
-          removeThumbnail(id);
-        }
-      }
-    } finally {
-      thumbnailRunning = false;
-    }
-  };
-
-  const queueThumbnail = (entry: LibraryEntry) => {
-    if (thumbnails()[entry.id] || thumbnailQueue.includes(entry.id)) return;
-    thumbnailQueue.push(entry.id);
-    void runThumbnailQueue();
-  };
-
-  for (const entry of library()) queueThumbnail(entry);
-
-  const render = async () => {
-    const currentSource = source();
-    if (!currentSource) return;
-
-    const current = ++requestId;
-    setRendering(true);
-    try {
-      const result = await withTypst(() => renderTypst(currentSource, values()));
-      if (current !== requestId) return;
-      if (!isSvg(result)) {
-        throw new Error("Typst did not produce an SVG. Check the document for errors.");
-      }
-      setSvg(result);
-      setError("");
-    } catch (cause) {
-      if (current !== requestId) return;
-      setError(errorMessage(cause));
-      setSvg("");
-    } finally {
-      if (current === requestId) setRendering(false);
-    }
-  };
-
-  const scheduleRender = () => {
-    if (!live() || !source()) return;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => void render(), 250);
-  };
-
-  const setFieldValue = (name: string, value: string) => {
-    setValues((previous) => ({ ...previous, [name]: value }));
-    scheduleRender();
-  };
-
-  const saveEntry = (
-    name: string,
-    text: string,
-    discovered: FormField[],
-  ): LibraryEntry => {
-    const existing = library().find((entry) => entry.name === name);
-    const entry: LibraryEntry = {
-      id: existing?.id ?? makeId(),
-      name,
-      source: text,
-      fields: discovered,
-    };
-    setLibrary((previous) => [entry, ...previous.filter((item) => item.id !== entry.id)]);
-    removeThumbnail(entry.id);
-    return entry;
-  };
-
-  const selectEntry = (entry: LibraryEntry) => {
-    cancelPending();
-    setSelectedId(entry.id);
-    setFileName(entry.name);
-    resetEditor();
-    setSource(entry.source);
-    setFields(entry.fields);
-    setValues(initialValues(entry.fields));
-    const thumbnail = thumbnails()[entry.id];
-    if (isSvg(thumbnail)) setSvg(thumbnail);
-    void render();
-  };
-
-  const showLibrary = () => {
-    cancelPending();
-    setSelectedId("");
-    setFileName("");
-    resetEditor();
-  };
-
   const removeSelected = () => {
-    const id = selectedId();
+    const id = libraryStore.selectedId();
     if (!id) return;
-    setLibrary((previous) => previous.filter((entry) => entry.id !== id));
-    removeThumbnail(id);
-    showLibrary();
-  };
-
-  const handleFileChange = async (
-    event: Event & { currentTarget: HTMLInputElement },
-  ) => {
-    const file = event.currentTarget.files?.[0];
-    if (!file) return;
-
-    cancelPending();
-    const current = requestId;
-    setFileName(file.name);
-    setLibraryError("");
-    resetEditor();
-    setDiscovering(true);
-
-    try {
-      const text = await file.text();
-      if (current !== requestId) return;
-      setSource(text);
-      const discovered = await withTypst(() => readSchema(text));
-      if (current !== requestId) return;
-      const entry = saveEntry(file.name, text, discovered);
-      queueThumbnail(entry);
-      setSelectedId(entry.id);
-      setFields(discovered);
-      setValues(initialValues(discovered));
-      if (discovered.length === 0) {
-        setSchemaError("No inputs discovered; rendering the document as-is.");
-      }
-    } catch (cause) {
-      if (current !== requestId) return;
-      setSchemaError(errorMessage(cause));
-    } finally {
-      if (current === requestId) {
-        setDiscovering(false);
-        void render();
-      }
-    }
+    libraryStore.removeEntry(id);
+    thumbnails.removeThumbnail(id);
+    session.backToLibrary();
   };
 
   return (
@@ -247,223 +39,53 @@ function App() {
       <header class="header">
         <div>
           <h1>Typst SVG library</h1>
-          <p class="subtitle">{library().length} saved document(s)</p>
+          <p class="subtitle">{libraryStore.library().length} saved document(s)</p>
         </div>
         <input
           type="file"
           accept=".typ,text/plain"
-          onChange={handleFileChange}
+          multiple
+          onChange={(event) => void session.handleFilesChange(event)}
           aria-label="Typst document"
         />
       </header>
 
-      <Show when={libraryError()}>
+      <Show when={libraryStore.libraryError()}>
         <p class="notice" role="alert">
-          {libraryError()}
+          {libraryStore.libraryError()}
         </p>
       </Show>
-      <Show when={error()}>
+      <Show when={session.renderError()}>
         <p class="error" role="alert">
-          {error()}
+          {session.renderError()}
         </p>
       </Show>
 
       <Show
-        when={!selected()}
+        when={!libraryStore.selectedEntry()}
         fallback={
-          <section class="editor">
-            <div class="editor-header">
-              <button type="button" class="link-button" onClick={showLibrary}>
-                ← Library
-              </button>
-              <h2>{selected()?.name}</h2>
-              <button type="button" class="danger" onClick={removeSelected}>
-                Delete
-              </button>
-            </div>
-            <p class="status" role="status">
-              {statusLabel()}
-            </p>
-            <Show when={schemaError()}>
-              <p class="notice">{schemaError()}</p>
-            </Show>
-
-            <div class="workspace">
-              <Show
-                when={fields().length > 0}
-                fallback={
-                  <aside class="form empty-form">
-                    No inputs discovered in this document.
-                  </aside>
-                }
-              >
-                <section class="form">
-                  <h2>Document inputs</h2>
-                  <For each={fields()}>
-                    {(field, index) => {
-                      const id = `field-${index()}`;
-                      const update = (value: string) =>
-                        setFieldValue(field.name, value);
-                      return (
-                        <div class="field">
-                          <label for={id}>
-                            {field.label} <span class="type">{field.type}</span>
-                          </label>
-                          <Switch>
-                            <Match when={field.type === "boolean"}>
-                              <input
-                                id={id}
-                                type="checkbox"
-                                checked={values()[field.name] === "true"}
-                                onChange={(event) =>
-                                  update(
-                                    event.currentTarget.checked ? "true" : "false",
-                                  )
-                                }
-                              />
-                            </Match>
-                            <Match when={field.type === "select"}>
-                              <select
-                                id={id}
-                                value={values()[field.name]}
-                                onChange={(event) => update(event.currentTarget.value)}
-                              >
-                                <For
-                                  each={
-                                    field.options.length > 0
-                                      ? field.options
-                                      : [values()[field.name]]
-                                  }
-                                >
-                                  {(option) => (
-                                    <option value={option}>{option}</option>
-                                  )}
-                                </For>
-                              </select>
-                            </Match>
-                            <Match when={field.type === "textarea"}>
-                              <textarea
-                                id={id}
-                                value={values()[field.name]}
-                                onInput={(event) => update(event.currentTarget.value)}
-                              />
-                            </Match>
-                            <Match when={["text", "number", "date"].includes(field.type)}>
-                              <input
-                                id={id}
-                                type={field.type}
-                                value={values()[field.name]}
-                                onInput={(event) => update(event.currentTarget.value)}
-                              />
-                            </Match>
-                          </Switch>
-                        </div>
-                      );
-                    }}
-                  </For>
-                  <div class="form-actions">
-                    <label class="toggle">
-                      <input
-                        type="checkbox"
-                        checked={live()}
-                        onChange={(event) => {
-                          setLive(event.currentTarget.checked);
-                          if (event.currentTarget.checked) scheduleRender();
-                        }}
-                      />
-                      Live update
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => void render()}
-                      disabled={rendering()}
-                    >
-                      Render
-                    </button>
-                  </div>
-                </section>
-              </Show>
-
-              <section class="preview-panel">
-                <Show
-                  when={svg()}
-                  fallback={
-                    <p class="preview-placeholder">
-                      {rendering() ? "Rendering..." : "No preview available."}
-                    </p>
-                  }
-                >
-                  <div class="preview" innerHTML={svg()} />
-                </Show>
-              </section>
-            </div>
-
-            <Show when={fields().length > 0}>
-              <details class="schema">
-                <summary>Discovered inputs ({fields().length})</summary>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Name</th>
-                      <th>Type</th>
-                      <th>Default</th>
-                      <th>Source</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <For each={fields()}>
-                      {(field) => (
-                        <tr>
-                          <td>{field.name}</td>
-                          <td>{field.type}</td>
-                          <td>{field.default || "—"}</td>
-                          <td>{field.origin}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
-              </details>
-            </Show>
-          </section>
+          <EditorView
+            entryName={session.fileName}
+            status={session.status}
+            schemaNotice={session.schemaNotice}
+            fields={session.fields}
+            values={session.values}
+            live={session.live}
+            rendering={session.rendering}
+            svg={session.svg}
+            onBack={session.backToLibrary}
+            onDelete={removeSelected}
+            onFieldChange={session.setFieldValue}
+            onToggleLive={session.changeLive}
+            onRender={() => void session.render()}
+          />
         }
       >
-        <section class="library">
-          <h2>Your documents</h2>
-          <Show
-            when={library().length > 0}
-            fallback={
-              <p class="empty">
-                No documents saved yet. Upload a .typ file to start your library.
-              </p>
-            }
-          >
-            <div class="library-grid">
-              <For each={library()}>
-                {(entry) => (
-                  <button
-                    type="button"
-                    class="card"
-                    onClick={() => selectEntry(entry)}
-                  >
-                    <span class="thumb-frame">
-                      <Show
-                        when={thumbnails()[entry.id]}
-                        fallback={<span class="thumb-placeholder">Preview…</span>}
-                      >
-                        {(thumbnail) => (
-                          <span class="thumb" innerHTML={thumbnail()} />
-                        )}
-                      </Show>
-                    </span>
-                    <span class="card-name">{entry.name}</span>
-                    <span class="card-meta">{entry.fields.length} input(s)</span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </Show>
-        </section>
+        <LibraryView
+          entries={libraryStore.library}
+          thumbnails={thumbnails.thumbnails}
+          onOpen={session.openDocument}
+        />
       </Show>
     </main>
   );
