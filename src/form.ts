@@ -1,12 +1,15 @@
 import { $typst } from "@myriaddreamin/typst.ts";
 
-export type FieldType =
-  | "text"
-  | "number"
-  | "boolean"
-  | "select"
-  | "date"
-  | "textarea";
+const FIELD_TYPES = [
+  "text",
+  "number",
+  "boolean",
+  "select",
+  "date",
+  "textarea",
+] as const;
+
+export type FieldType = (typeof FIELD_TYPES)[number];
 
 export interface FormField {
   name: string;
@@ -20,6 +23,7 @@ export interface FormField {
 interface AstRange {
   line: number;
   start: number;
+  endLine: number;
   end: number;
 }
 
@@ -29,16 +33,12 @@ interface AstNode {
   children: AstNode[];
 }
 
-const AST_PATH = "/main.typ";
+interface ParsedAst {
+  root: AstNode;
+  lines: string[];
+}
 
-const FIELD_TYPES: FieldType[] = [
-  "text",
-  "number",
-  "boolean",
-  "select",
-  "date",
-  "textarea",
-];
+const AST_PATH = "/main.typ";
 
 function cleanLabel(raw: string): { label: string; range?: AstRange } {
   const text = raw
@@ -51,7 +51,7 @@ function cleanLabel(raw: string): { label: string; range?: AstRange } {
     .replace(/&amp;/g, "&")
     .trim();
 
-  const match = /^(.*?)\s*(<(\d+):(\d+)~(\d+):(\d+)>)$/.exec(text);
+  const match = /^([\s\S]*?)\s*(<(\d+):(\d+)~(\d+):(\d+)>)$/.exec(text);
   if (!match) return { label: text };
 
   return {
@@ -59,6 +59,7 @@ function cleanLabel(raw: string): { label: string; range?: AstRange } {
     range: {
       line: Number(match[3]),
       start: Number(match[4]),
+      endLine: Number(match[5]),
       end: Number(match[6]),
     },
   };
@@ -67,9 +68,16 @@ function cleanLabel(raw: string): { label: string; range?: AstRange } {
 function parseAst(dump: string): AstNode | null {
   let root: AstNode | null = null;
   const stack: { indent: number; node: AstNode }[] = [];
+  const nodeLine = /^\s*(?:- )?(?:s|c):\s?/;
+  const lines: string[] = [];
 
   for (const line of dump.split("\n")) {
-    const match = /^(\s*)(?:- )?(s|c):\s?(.*)$/.exec(line);
+    if (nodeLine.test(line)) lines.push(line);
+    else if (lines.length) lines[lines.length - 1] += `\n${line}`;
+  }
+
+  for (const line of lines) {
+    const match = /^(\s*)(?:- )?(s|c):\s?([\s\S]*)$/.exec(line);
     if (!match || match[2] !== "s") continue;
 
     const node: AstNode = { ...cleanLabel(match[3]), children: [] };
@@ -89,6 +97,11 @@ function parseAst(dump: string): AstNode | null {
   return root;
 }
 
+function parseDocument(dump: string, source: string): ParsedAst | null {
+  const root = parseAst(dump);
+  return root ? { root, lines: source.split("\n") } : null;
+}
+
 function descendants(node: AstNode): AstNode[] {
   return [node, ...node.children.flatMap(descendants)];
 }
@@ -98,14 +111,49 @@ function identifier(node: AstNode): string | undefined {
   return match?.[1];
 }
 
+function fieldPath(node: AstNode): string[] | undefined {
+  if (node.label !== "Marked::FieldAccess") return undefined;
+
+  const parts: string[] = [];
+  for (const child of node.children) {
+    if (child.label === "Punc::Dot") continue;
+
+    const name = identifier(child);
+    if (name) {
+      parts.push(name);
+      continue;
+    }
+
+    const base = fieldPath(child);
+    if (base) {
+      parts.push(...base);
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return parts.length > 0 ? parts : undefined;
+}
+
 function stringLiteral(node: AstNode): string | undefined {
-  const match = /^Str\("(.*)"\)$/.exec(node.label);
+  const match = /^Str\("([\s\S]*)"\)$/.exec(node.label);
   return match?.[1];
 }
 
 function sourceText(node: AstNode, lines: string[]): string {
   if (!node.range) return "";
-  return (lines[node.range.line - 1] ?? "").slice(node.range.start, node.range.end).trim();
+  const { line, start, endLine, end } = node.range;
+  if (line === endLine) {
+    return (lines[line - 1] ?? "").slice(start, end).trim();
+  }
+  return [
+    (lines[line - 1] ?? "").slice(start),
+    ...lines.slice(line, endLine - 1),
+    (lines[endLine - 1] ?? "").slice(0, end),
+  ]
+    .join("\n")
+    .trim();
 }
 
 function literalType(node: AstNode): FieldType {
@@ -120,32 +168,67 @@ function literalValue(node: AstNode, lines: string[]): string {
 }
 
 function isSysInputsAt(node: AstNode): boolean {
-  return descendants(node)
-    .map(identifier)
-    .filter((name): name is string => Boolean(name))
-    .join(".") === "sys.inputs.at";
+  return fieldPath(node)?.join(".") === "sys.inputs.at";
 }
 
 function directInputName(node: AstNode): string | undefined {
-  if (node.label !== "Marked::FieldAccess") return undefined;
-  const names = descendants(node)
-    .map(identifier)
-    .filter((name): name is string => Boolean(name));
-  if (names.length === 3 && names[0] === "sys" && names[1] === "inputs") {
-    return names[2];
-  }
-  return undefined;
+  const path = fieldPath(node);
+  return path?.length === 3 && path[0] === "sys" && path[1] === "inputs" && path[2] !== "at"
+    ? path[2]
+    : undefined;
 }
 
 function skipSubtree(node: AstNode, skipped: WeakSet<AstNode>): void {
   for (const descendant of descendants(node)) skipped.add(descendant);
 }
 
-function fieldsFromAst(dump: string, source: string): FormField[] {
-  const root = parseAst(dump);
-  if (!root) return [];
+function namedArgument(args: AstNode, key: string): AstNode | undefined {
+  return args.children.find(
+    (child) => child.label === "Marked::Named" && identifier(child.children[0]) === key,
+  );
+}
 
-  const lines = source.split("\n");
+function namedValue(named: AstNode): AstNode | undefined {
+  return named.children.find(
+    (child, index) => index !== 0 && child.label !== "Punc::Colon",
+  );
+}
+
+function inferredField(name: string, type: FieldType, defaultValue: string): FormField {
+  return {
+    name,
+    label: name,
+    type,
+    default: defaultValue,
+    options: [],
+    origin: "inferred",
+  };
+}
+
+function atCallArgs(node: AstNode): AstNode | undefined {
+  if (node.label !== "Marked::FuncCall" || !isSysInputsAt(node.children[0])) return undefined;
+  return node.children.find((child) => child.label === "Marked::Args");
+}
+
+function atCallField(node: AstNode, lines: string[]): FormField | undefined {
+  const args = atCallArgs(node);
+  if (!args) return undefined;
+
+  const keyNode = args.children.find((child) => stringLiteral(child) !== undefined);
+  const key = keyNode ? stringLiteral(keyNode) : undefined;
+  if (!key) return undefined;
+
+  const named = namedArgument(args, "default");
+  const defaultNode = named ? namedValue(named) : undefined;
+  return inferredField(
+    key,
+    defaultNode ? literalType(defaultNode) : "text",
+    defaultNode ? literalValue(defaultNode, lines) : "",
+  );
+}
+
+function fieldsFromAst(parsed: ParsedAst): FormField[] {
+  const { root, lines } = parsed;
   const fields = new Map<string, FormField>();
   const skipped = new WeakSet<AstNode>();
 
@@ -174,23 +257,8 @@ function fieldsFromAst(dump: string, source: string): FormField[] {
       const args = node.children.find((child) => child.label === "Marked::Args");
 
       if (callee && isSysInputsAt(callee) && args) {
-        const keyNode = args.children.find((child) => stringLiteral(child) !== undefined);
-        const key = keyNode ? stringLiteral(keyNode) : undefined;
-        const named = args.children.find((child) => child.label === "Marked::Named");
-        const defaultNode = named?.children.find(
-          (child) => child !== named.children[0] && child.label !== "Punc::Colon",
-        );
-
-        if (key) {
-          add({
-            name: key,
-            label: key,
-            type: defaultNode ? literalType(defaultNode) : "text",
-            default: defaultNode ? literalValue(defaultNode, lines) : "",
-            options: [],
-            origin: "inferred",
-          });
-        }
+        const field = atCallField(node, lines);
+        if (field) add(field);
 
         skipSubtree(callee, skipped);
         for (const child of node.children) {
@@ -201,33 +269,27 @@ function fieldsFromAst(dump: string, source: string): FormField[] {
 
       const conversion = /^Fn::\(Ident: "(int|float|bool)"\)$/.exec(callee?.label ?? "");
       if (conversion && args) {
-        const target = descendants(args).find((child) => directInputName(child));
-        const name = target ? directInputName(target) : undefined;
-        if (name && target) {
-          add({
-            name,
-            label: name,
-            type: conversion[1] === "bool" ? "boolean" : "number",
-            default: conversion[1] === "bool" ? "false" : "0",
-            options: [],
-            origin: "inferred",
-          });
-          skipSubtree(target, skipped);
+        const type: FieldType = conversion[1] === "bool" ? "boolean" : "number";
+        const fallback = type === "boolean" ? "false" : "0";
+        const call = descendants(args).find((child) => atCallArgs(child));
+
+        if (call) {
+          const field = atCallField(call, lines);
+          if (field) add({ ...field, type, default: field.default || fallback });
+          skipSubtree(call, skipped);
+        } else {
+          const target = descendants(args).find((child) => directInputName(child));
+          const name = target ? directInputName(target) : undefined;
+          if (name && target) {
+            add(inferredField(name, type, fallback));
+            skipSubtree(target, skipped);
+          }
         }
       }
     }
 
     const direct = directInputName(node);
-    if (direct) {
-      add({
-        name: direct,
-        label: direct,
-        type: "text",
-        default: "",
-        options: [],
-        origin: "inferred",
-      });
-    }
+    if (direct) add(inferredField(direct, "text", ""));
 
     for (const child of node.children) walk(child);
   };
@@ -241,7 +303,7 @@ function asFieldType(value: unknown): FieldType {
   return FIELD_TYPES.includes(text as FieldType) ? (text as FieldType) : "text";
 }
 
-export function normalizeDeclared(value: unknown): FormField[] {
+function normalizeDeclared(value: unknown): FormField[] {
   const items = (Array.isArray(value) ? value.flat(1) : [value]).filter(
     (item): item is Record<string, unknown> =>
       typeof item === "object" && item !== null,
@@ -267,33 +329,25 @@ export function normalizeDeclared(value: unknown): FormField[] {
     .filter((field) => field.name.length > 0);
 }
 
-function literalArray(node: AstNode): string[] {
-  if (node.label !== "Marked::Array") return [];
-  return node.children.flatMap((child) => {
-    const value = stringLiteral(child);
-    return value === undefined ? [] : [value];
-  });
-}
-
 function literal(node: AstNode, lines: string[]): unknown {
   const value = stringLiteral(node);
   if (value !== undefined) return value;
-  if (node.label === "Marked::Array") return literalArray(node);
+  if (node.label === "Marked::Array") {
+    return node.children.flatMap((child) => {
+      const item = stringLiteral(child);
+      return item === undefined ? [] : [item];
+    });
+  }
   return sourceText(node, lines);
 }
 
-function declaredFromAst(dump: string, source: string): FormField[] {
-  const root = parseAst(dump);
-  if (!root) return [];
-
-  const lines = source.split("\n");
+function declaredFromAst(parsed: ParsedAst): FormField[] {
+  const { root, lines } = parsed;
   const schema: Record<string, unknown>[] = [];
 
   for (const node of descendants(root)) {
     if (node.label !== "Marked::LetBinding") continue;
-    const hasName = node.children.some((child) =>
-      /^Marked::\(Ident: "form-schema"\)$/.test(child.label),
-    );
+    const hasName = node.children.some((child) => identifier(child) === "form-schema");
     if (!hasName) continue;
 
     const array = node.children.find((child) => child.label === "Marked::Array");
@@ -305,9 +359,7 @@ function declaredFromAst(dump: string, source: string): FormField[] {
       for (const named of dict.children) {
         if (named.label !== "Marked::Named") continue;
         const key = identifier(named.children[0]);
-        const valueNode = named.children.find(
-          (child) => child !== named.children[0] && child.label !== "Punc::Colon",
-        );
+        const valueNode = namedValue(named);
         if (key && valueNode) record[key] = literal(valueNode, lines);
       }
       schema.push(record);
@@ -328,7 +380,8 @@ export async function readSchema(source: string): Promise<FormField[]> {
     ast = "";
   }
 
-  let declared = ast ? declaredFromAst(ast, source) : [];
+  const parsed = ast ? parseDocument(ast, source) : null;
+  let declared = parsed ? declaredFromAst(parsed) : [];
   if (declared.length === 0) {
     try {
       const value = await $typst.query<unknown>({
@@ -342,7 +395,7 @@ export async function readSchema(source: string): Promise<FormField[]> {
     }
   }
 
-  const inferred = ast ? fieldsFromAst(ast, source) : [];
+  const inferred = parsed ? fieldsFromAst(parsed) : [];
   const known = new Set(declared.map((field) => field.name));
   return [...declared, ...inferred.filter((field) => !known.has(field.name))];
 }

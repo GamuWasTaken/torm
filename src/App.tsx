@@ -12,6 +12,14 @@ import { loadLibrary, makeId, saveLibrary, type LibraryEntry } from "./library";
 import { renderTypst } from "./typst";
 import "./App.css";
 
+function errorMessage(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause);
+}
+
+function isSvg(value: string | undefined): boolean {
+  return typeof value === "string" && value.includes("<svg");
+}
+
 function App() {
   const [library, setLibrary] = createSignal<LibraryEntry[]>(loadLibrary());
   const [selectedId, setSelectedId] = createSignal("");
@@ -37,9 +45,42 @@ function App() {
   let thumbnailRunning = false;
 
   const withTypst = <T,>(task: () => Promise<T>): Promise<T> => {
-    const result = typstChain.then(task, task);
-    typstChain = result.then(() => undefined, () => undefined);
+    const result = typstChain.catch(() => undefined).then(task);
+    typstChain = result.then(
+      () => undefined,
+      () => undefined,
+    );
     return result;
+  };
+
+  const removeThumbnail = (id: string) => {
+    setThumbnails((previous) => {
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const cancelPending = () => {
+    ++requestId;
+    clearTimeout(debounceTimer);
+    setRendering(false);
+    setDiscovering(false);
+  };
+
+  const resetEditor = () => {
+    setSource("");
+    setSvg("");
+    setFields([]);
+    setValues({});
+    setError("");
+    setSchemaError("");
+  };
+
+  const statusLabel = () => {
+    if (discovering()) return `Reading ${fileName()}...`;
+    if (rendering()) return `Rendering ${fileName()}...`;
+    return `Editing ${fileName()}`;
   };
 
   createEffect(() => {
@@ -64,18 +105,11 @@ function App() {
           const result = await withTypst(() =>
             renderTypst(entry.source, initialValues(entry.fields)),
           );
-          if (
-            result.includes("<svg") &&
-            library().some((item) => item.id === id)
-          ) {
+          if (isSvg(result) && library().some((item) => item.id === id)) {
             setThumbnails((previous) => ({ ...previous, [id]: result }));
           }
         } catch {
-          setThumbnails((previous) => {
-            const next = { ...previous };
-            delete next[id];
-            return next;
-          });
+          removeThumbnail(id);
         }
       }
     } finally {
@@ -100,14 +134,14 @@ function App() {
     try {
       const result = await withTypst(() => renderTypst(currentSource, values()));
       if (current !== requestId) return;
-      if (!result.includes("<svg")) {
+      if (!isSvg(result)) {
         throw new Error("Typst did not produce an SVG. Check the document for errors.");
       }
       setSvg(result);
       setError("");
     } catch (cause) {
       if (current !== requestId) return;
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(errorMessage(cause));
       setSvg("");
     } finally {
       if (current === requestId) setRendering(false);
@@ -136,51 +170,37 @@ function App() {
       name,
       source: text,
       fields: discovered,
-      updatedAt: Date.now(),
     };
     setLibrary((previous) => [entry, ...previous.filter((item) => item.id !== entry.id)]);
-    setThumbnails((previous) => {
-      const next = { ...previous };
-      delete next[entry.id];
-      return next;
-    });
+    removeThumbnail(entry.id);
     return entry;
   };
 
   const selectEntry = (entry: LibraryEntry) => {
-    ++requestId;
-    clearTimeout(debounceTimer);
+    cancelPending();
     setSelectedId(entry.id);
     setFileName(entry.name);
+    resetEditor();
     setSource(entry.source);
     setFields(entry.fields);
     setValues(initialValues(entry.fields));
-    setError("");
-    setSchemaError("");
     const thumbnail = thumbnails()[entry.id];
-    setSvg(thumbnail && thumbnail.includes("<svg") ? thumbnail : "");
+    if (isSvg(thumbnail)) setSvg(thumbnail);
     void render();
   };
 
   const showLibrary = () => {
-    ++requestId;
-    clearTimeout(debounceTimer);
+    cancelPending();
     setSelectedId("");
-    setSource("");
-    setSvg("");
-    setError("");
-    setSchemaError("");
+    setFileName("");
+    resetEditor();
   };
 
   const removeSelected = () => {
     const id = selectedId();
     if (!id) return;
     setLibrary((previous) => previous.filter((entry) => entry.id !== id));
-    setThumbnails((previous) => {
-      const next = { ...previous };
-      delete next[id];
-      return next;
-    });
+    removeThumbnail(id);
     showLibrary();
   };
 
@@ -190,16 +210,11 @@ function App() {
     const file = event.currentTarget.files?.[0];
     if (!file) return;
 
-    const current = ++requestId;
-    clearTimeout(debounceTimer);
+    cancelPending();
+    const current = requestId;
     setFileName(file.name);
-    setError("");
-    setSchemaError("");
     setLibraryError("");
-    setSvg("");
-    setFields([]);
-    setValues({});
-    setSource("");
+    resetEditor();
     setDiscovering(true);
 
     try {
@@ -218,7 +233,7 @@ function App() {
       }
     } catch (cause) {
       if (current !== requestId) return;
-      setSchemaError(cause instanceof Error ? cause.message : String(cause));
+      setSchemaError(errorMessage(cause));
     } finally {
       if (current === requestId) {
         setDiscovering(false);
@@ -267,11 +282,7 @@ function App() {
               </button>
             </div>
             <p class="status" role="status">
-              {discovering()
-                ? `Reading ${fileName()}...`
-                : rendering()
-                  ? `Rendering ${fileName()}...`
-                  : `Editing ${fileName()}`}
+              {statusLabel()}
             </p>
             <Show when={schemaError()}>
               <p class="notice">{schemaError()}</p>

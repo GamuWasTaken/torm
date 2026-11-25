@@ -1,17 +1,13 @@
 import { $typst } from "@myriaddreamin/typst.ts";
-import type { WebAssemblyModuleRef } from "@myriaddreamin/typst.ts/wasm";
 import compilerWasm from "@myriaddreamin/typst-ts-web-compiler/pkg/typst_ts_web_compiler_bg.wasm?url";
 import rendererWasm from "@myriaddreamin/typst-ts-renderer/pkg/typst_ts_renderer_bg.wasm?url";
 
-const wasmRef = (url: string) =>
-  ({ module_or_path: url }) as unknown as WebAssemblyModuleRef;
-
 $typst.setCompilerInitOptions({
-  getModule: () => wasmRef(compilerWasm),
+  getModule: () => compilerWasm,
 });
 
 $typst.setRendererInitOptions({
-  getModule: () => wasmRef(rendererWasm),
+  getModule: () => rendererWasm,
 });
 
 export async function renderTypst(
