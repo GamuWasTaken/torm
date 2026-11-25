@@ -1,0 +1,311 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: light dark;
+}
+
+.app {
+  display: flex;
+  min-height: 100vh;
+  width: min(100% - 2rem, 1200px);
+  margin: 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1rem;
+  padding: 2rem 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.app h1 {
+  margin: 0;
+  font-size: 2.25rem;
+}
+
+.app h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.subtitle {
+  margin: 0.25rem 0 0;
+  color: #888;
+}
+
+.app input,
+.app select,
+.app textarea {
+  max-width: 100%;
+  font: inherit;
+}
+
+.status,
+.notice,
+.error,
+.subtitle {
+  margin: 0;
+}
+
+.notice {
+  color: #b8860b;
+}
+
+.error {
+  color: #ff6b6b;
+}
+
+.library,
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.empty {
+  border: 1px dashed #555;
+  border-radius: 8px;
+  padding: 2rem;
+  color: #888;
+  text-align: center;
+}
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid #444;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+
+.card:hover {
+  border-color: #888;
+  transform: translateY(-2px);
+}
+
+.thumb-frame {
+  display: flex;
+  width: 100%;
+  height: 150px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.thumb svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.thumb-placeholder {
+  color: #999;
+  font-size: 0.85rem;
+}
+
+.card-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-meta {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.link-button,
+.danger {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.link-button {
+  color: #7aa2f7;
+}
+
+.danger {
+  color: #ff6b6b;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.form,
+.preview-panel,
+.schema {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.empty-form {
+  color: #888;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.field label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 600;
+}
+
+.field .type {
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  background: #4444;
+  color: #888;
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+
+.field input[type="checkbox"],
+.toggle input {
+  align-self: flex-start;
+  width: 1.1rem;
+  height: 1.1rem;
+}
+
+.field textarea {
+  min-height: 5rem;
+  resize: vertical;
+}
+
+.form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-top: 1px solid #4444;
+  padding-top: 0.75rem;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+button:not(.card, .link-button, .danger) {
+  border: 1px solid #666;
+  border-radius: 6px;
+  padding: 0.4rem 0.9rem;
+  background: #444;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.preview-panel {
+  min-height: 420px;
+  overflow: auto;
+  background: #ffffff;
+}
+
+.preview-placeholder {
+  color: #888;
+  text-align: center;
+}
+
+.preview {
+  width: 100%;
+  overflow: auto;
+}
+
+.preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.schema summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.schema table {
+  width: 100%;
+  margin-top: 0.75rem;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.schema th,
+.schema td {
+  border-bottom: 1px solid #4444;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+
+@media (max-width: 800px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-panel {
+    min-height: 300px;
+  }
+}
