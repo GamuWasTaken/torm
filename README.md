@@ -1,4 +1,10 @@
-# Typst SVG Library
+
+> [!NOTE]
+> 
+> | [<img src="https://raw.githubusercontent.com/NamtaoProductions/0rwx.com/108078203f642cdfc03fdfdc98a0cdc1561e8fa3/static/AI-W-dark.svg" width="40px" align="center">](http://0rwx.com) | AI:W I've selected the tech and architecture and fully reviewed each line of code but not written any. |
+> | ----------------------- | ---------------------------------------------------------------------------------- |
+
+# Torm
 
 A small Solid + Vite app that renders Typst documents to SVG, generates a form from document inputs, and saves documents in browser localStorage.
 
